@@ -35,14 +35,14 @@ provider "aws" {
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   skip_requesting_account_id  = false
-  s3_use_path_style            = true
+  s3_use_path_style           = true
 
   endpoints {
-    ec2                   = "http://localhost:4566"
-    lambda                = "http://localhost:4566"
-    cloudwatchlogs         = "http://localhost:4566"
-    apigateway             = "http://localhost:4566"
-    elasticloadbalancing   = "http://localhost:4566"
+    ec2                  = "http://localhost:4566"
+    lambda               = "http://localhost:4566"
+    cloudwatchlogs       = "http://localhost:4566"
+    apigateway           = "http://localhost:4566"
+    elasticloadbalancing = "http://localhost:4566"
   }
 
   default_tags {
@@ -125,13 +125,13 @@ module "api_gateway" {
 
     "ANY /users/{proxy+}" = {
       authorization_type = "CUSTOM"
-      authorizer_key      = "request"
+      authorizer_key     = "request"
       integration = {
-        type               = "HTTP_PROXY"
-        method             = "ANY"
-        uri                = local.eks_alb_listener_arn
-        connection_type    = "VPC_LINK"
-        vpc_link_key       = "users"
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = local.eks_alb_listener_arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
         request_parameters = {
           "overwrite:path" = "$request.path"
         }

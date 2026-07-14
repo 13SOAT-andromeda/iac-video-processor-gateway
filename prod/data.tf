@@ -32,5 +32,5 @@ data "aws_lb" "eks_alb" {
 
 data "aws_lb_listener" "eks_alb_listener" {
   load_balancer_arn = data.aws_lb.eks_alb.arn
-  port               = 80
+  port              = 80
 }

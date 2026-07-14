@@ -91,13 +91,13 @@ module "api_gateway" {
 
     "ANY /users/{proxy+}" = {
       authorization_type = "CUSTOM"
-      authorizer_key      = "request"
+      authorizer_key     = "request"
       integration = {
-        type               = "HTTP_PROXY"
-        method             = "ANY"
-        uri                = data.aws_lb_listener.eks_alb_listener.arn
-        connection_type    = "VPC_LINK"
-        vpc_link_key       = "users"
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = data.aws_lb_listener.eks_alb_listener.arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
         request_parameters = {
           "overwrite:path" = "$request.path"
         }
