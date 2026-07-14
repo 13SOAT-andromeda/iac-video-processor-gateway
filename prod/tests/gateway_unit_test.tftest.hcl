@@ -95,3 +95,17 @@ run "lambda_permissions_grant_apigateway_principal" {
     error_message = "authentication Lambda permission must reference the same function looked up via data source"
   }
 }
+
+run "login_stays_public_users_stays_protected" {
+  command = plan
+
+  assert {
+    condition     = module.api_gateway.routes["POST /auth/login"].authorization_type == "NONE"
+    error_message = "POST /auth/login must remain authorization_type = NONE; attaching the authorizer here would lock users out of logging in and break the auth flow entirely"
+  }
+
+  assert {
+    condition     = module.api_gateway.routes["ANY /users/{proxy+}"].authorization_type == "CUSTOM"
+    error_message = "ANY /users/{proxy+} must remain authorization_type = CUSTOM (behind the request authorizer); losing this would expose all user data endpoints without authentication"
+  }
+}
