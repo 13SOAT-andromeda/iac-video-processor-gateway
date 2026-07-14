@@ -11,7 +11,7 @@
 
 Provisionar a borda da API: **API Gateway HTTP API** com as rotas de autenticação/usuários e o `REQUEST` authorizer plugado em toda rota protegida.
 
-**Diferença importante em relação ao repo antigo:** `iac-tech-challenge-gateway` provisionava API Gateway **REST** com **VPC Link** para um ALB do EKS (proxy `/api/*` para pods). A arquitetura nova é 100% Lambda no backend desta fase — não existe EKS/ALB para rotear. Portanto **não portamos VPC Link, `data.aws_lb`, `data.aws_lb_listener` nem `lab_role_arn`** (esse último era específico da `LabRole` de conta de laboratório do tech challenge antigo; reavaliar se a conta nova tem a mesma restrição).
+**Diferença importante em relação ao repo antigo:** `iac-tech-challenge-gateway` provisionava API Gateway **REST** com **VPC Link** para um ALB do EKS (proxy `/api/*` para pods). A arquitetura nova é 100% Lambda no backend desta fase — não existe EKS/ALB para rotear. Portanto **não portamos VPC Link, `data.aws_lb`, `data.aws_lb_listener` nem `lab_role_arn`** — este último por decisão definitiva, não pendência (ver seção 6.1).
 
 ---
 
@@ -79,6 +79,18 @@ Estes três nomes de função (`video-processor-authentication`, `video-processo
 
 ---
 
+## 6.1 LabRole (AWS Academy) — decisão: não é necessário neste repo
+
+**Decisão definitiva** (substitui o ponto em aberto anterior): `iac-video-processor-gateway` **não referencia nenhuma IAM role própria**, nem via `data.aws_iam_role.lab_role` nem via variável equivalente. Justificativa:
+
+1. **Integração com as 3 Lambdas** (`AWS_PROXY`) não depende de uma IAM role do lado do API Gateway — a permissão de invocação é *resource-based*, via `aws_lambda_permission` (`principal = apigateway.amazonaws.com`, `source_arn` = ARN de execução da API). Já era assim no repo antigo (`aws_lambda_permission.authentication`/`.authorizer`) e continua idêntico aqui.
+2. **CloudWatch access logging** do stage: confirmado na documentação oficial da AWS ("Configure logging for HTTP APIs in API Gateway") que **API Gateway v2 (HTTP API) não exige** o recurso de conta `aws_api_gateway_account`/CloudWatch role que a REST API v1 exige — só precisa que o log group exista, o que o módulo `terraform-aws-modules/apigateway-v2/aws` já provisiona sozinho (`stage_access_log_settings.create_log_group = true`, default).
+3. Não existe VPC Link/ALB/EKS nesta arquitetura (seção 1) — era o único lugar onde uma role faria sentido semanticamente, e mesmo assim o repo antigo nunca chegou a usá-la de fato (`var.lab_role_arn` era buscado em `data.tf` mas não aparecia em nenhum `resource` do módulo `api-gateway` — código morto).
+
+**Efeito prático para o Academy:** zero chamadas a IAM a partir deste repo, logo zero risco de esbarrar nas restrições de `iam:CreateRole`/`iam:PassRole` que a `LabRole` impõe. A exposição a essas restrições fica isolada nos 3 repos de serviço (execution role de cada Lambda), que é onde a `LabRole` precisa de fato ser referenciada/reutilizada — fora do escopo deste repo.
+
+---
+
 ## 7. Porta do repo antigo (`iac-tech-challenge-gateway`)
 
 | Antigo | Novo | Observação |
@@ -86,7 +98,7 @@ Estes três nomes de função (`video-processor-authentication`, `video-processo
 | `modules/api-gateway` | módulo de registry `terraform-aws-modules/apigateway-v2/aws` | reescrito — REST→HTTP API, remove VPC Link/ALB |
 | `data.aws_vpc`/`data.aws_subnets`/`data.aws_security_group` (para VPC Link) | — | **não portado** — sem VPC Link nesta arquitetura |
 | `data.aws_lb`/`data.aws_lb_listener` | — | **não portado** — sem ALB/EKS no backend desta fase |
-| `data.aws_iam_role.lab_role` | a reavaliar | só recriar se a conta AWS usada tiver a mesma restrição de `LabRole` (AWS Academy) |
+| `data.aws_iam_role.lab_role` / `var.lab_role_arn` | — | **não portado, decisão definitiva** — ver seção 6.1 |
 | `data.aws_lambda_function` (authentication/authorizer) | mantido, nomes atualizados | authentication + authorizer + **novo**: users |
 | `aws/` + `localstack/` | `prod/` + `dev/` | renomeado |
 
@@ -95,5 +107,6 @@ Estes três nomes de função (`video-processor-authentication`, `video-processo
 ## 8. Pontos em aberto (resolver no plano de implementação)
 
 1. CORS: conforme a arquitetura (seção 5), o Next.js atua como BFF — chamadas ao API Gateway partem do servidor, não do browser, então CORS não é necessário no API Gateway nesta fase (não há frontend ainda, mas a decisão já está tomada para quando ele existir).
-2. Confirmar se a conta AWS de destino tem a mesma restrição de `LabRole` do tech challenge anterior (impacta se `lab_role_arn` precisa voltar).
-3. Rate limiting/usage plan em `/auth/login` (mencionado em `service-authentication.md` como erro `429 TOO_MANY_ATTEMPTS`) — configurar throttling no estágio do HTTP API.
+2. Rate limiting/usage plan em `/auth/login` (mencionado em `service-authentication.md` como erro `429 TOO_MANY_ATTEMPTS`) — configurar throttling no estágio do HTTP API.
+
+(O ponto anterior sobre `LabRole` foi resolvido — ver seção 6.1.)
