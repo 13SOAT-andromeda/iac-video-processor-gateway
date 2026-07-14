@@ -1,0 +1,15 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+terraform.tfvars
+terraform.tfvars.json
+*.tfplan
+.terraform.lock.hcl
+
+# local development
+.aws-sam
+
+# Agents
+.claude/
