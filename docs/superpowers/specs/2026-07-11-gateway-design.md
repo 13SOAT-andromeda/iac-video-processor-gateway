@@ -78,7 +78,7 @@ data "aws_subnets" "private" {
 
 data "aws_lb" "eks_alb" {
   tags = {
-    "kubernetes.io/cluster/video-processor-eks" = "owned"
+    "video-processor/alb" = "unified"
   }
 }
 
@@ -91,9 +91,11 @@ data "aws_lb_listener" "eks_alb_listener" {
 **Contrato entre repos:**
 - `video-processor-authentication` / `video-processor-authorizer` — nomes exatos de função Lambda (Terraform local de cada serviço).
 - `video-processor-vpc` — tag `Name` da VPC, definida em `iac-video-processor-infra` (seção 4 daquele spec).
-- `video-processor-eks` — tag de cluster EKS, usada para achar o ALB (`kubernetes.io/cluster/video-processor-eks = owned`, aplicada automaticamente pelo AWS Load Balancer Controller nos recursos que ele cria a partir de `Ingress`). O security group do VPC Link é um recurso dedicado deste repo (`aws_security_group.vpc_link`, seção 7), não uma reutilização do security group do cluster — mais simples e isolado que o padrão do repo antigo, que reaproveitava o SG do cluster EKS por padrão.
+- `video-processor/alb = unified` — **tag determinística e exclusiva** do ALB compartilhado (atualizado 2026-07-13, ver nota abaixo), aplicada via annotation `alb.ingress.kubernetes.io/tags` no `Ingress` único mantido por `iac-video-processor-infra` (seção 6 daquele spec). O security group do VPC Link é um recurso dedicado deste repo (`aws_security_group.vpc_link`, seção 7), não uma reutilização do security group do cluster.
 
-O ALB em si **não é criado por nenhum repo Terraform** — é provisionado dinamicamente pelo AWS Load Balancer Controller (rodando no EKS, instalado via Helm pelo `iac-video-processor-infra`) a partir dos `Ingress` de cada serviço. Este repo só o **descobre** via `data.aws_lb`.
+**Nota — por que uma tag exclusiva, e não a tag genérica de cluster (correção 2026-07-13):** a primeira versão deste spec usava `kubernetes.io/cluster/video-processor-eks = owned` para o `data.aws_lb`. Essa tag é aplicada pelo AWS Load Balancer Controller a **qualquer** ALB criado a partir de **qualquer** `Ingress` daquele cluster — com mais de um `Ingress`/ALB no cluster, o `data.aws_lb` passa a ter múltiplos resultados possíveis (falha ou resultado imprevisível). Isso é exatamente o bug que o time bateu no `tech-challenge` (ver `tech-challenge-fiap/docs/superpowers/specs/2026-05-19-centralized-ingress-design.md`): cada serviço criava seu próprio `Ingress`, gerando um ALB por serviço, todos com a mesma tag genérica. A correção adotada lá — e replicada aqui — foi (1) usar uma tag própria e exclusiva do projeto (`video-processor/alb = unified`) e (2) centralizar o roteamento num único `Ingress` (não um por serviço) — ver `iac-video-processor-infra`, seção 6.
+
+O ALB em si **não é criado por nenhum repo Terraform** — é provisionado dinamicamente pelo AWS Load Balancer Controller (rodando no EKS, instalado via Helm pelo `iac-video-processor-infra`) a partir do `Ingress` único mantido por aquele repo. Este repo só o **descobre** via `data.aws_lb`.
 
 ---
 
@@ -120,9 +122,11 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 ## 7. VPC Link + ALB compartilhado (EKS)
 
 - **1 VPC Link único** (`aws_apigatewayv2_vpc_link`), reaproveitado por todas as rotas de domínio atuais e futuras — não é 1 VPC Link por serviço.
-- **1 integração `HTTP_PROXY` por rota de domínio**, cada uma apontando pro mesmo listener do ALB (porta 80) e pelo mesmo VPC Link (`connection_id`/`vpc_link_key`), com `request_parameters = { "overwrite:path" = "$request.path" }` — o path completo é repassado ao ALB, e o roteamento por prefixo (`/users`, futuramente `/videos`, `/links`) acontece **dentro do cluster**, via regras de path dos recursos `Ingress` de cada serviço (mesmo `alb.ingress.kubernetes.io/group.name`, para que o AWS Load Balancer Controller funda todos num único ALB — ver `iac-video-processor-infra`, seção 6). Nota de implementação: o módulo Terraform escolhido (seção 2) embute a integração dentro de cada entrada do mapa `routes`, então tecnicamente cada rota ganha seu próprio recurso `aws_apigatewayv2_integration` — o que é **compartilhado de fato** (e o que importa pra custo/eficiência) é o VPC Link e o ALB, não o recurso leve de integração em si.
+- **1 integração `HTTP_PROXY` por rota de domínio**, cada uma apontando pro mesmo listener do ALB (porta 80) e pelo mesmo VPC Link (`connection_id`/`vpc_link_key`), com `request_parameters = { "overwrite:path" = "$request.path" }` — o path completo é repassado ao ALB. Nota de implementação: o módulo Terraform escolhido (seção 2) embute a integração dentro de cada entrada do mapa `routes`, então tecnicamente cada rota ganha seu próprio recurso `aws_apigatewayv2_integration` — o que é **compartilhado de fato** (e o que importa pra custo/eficiência) é o VPC Link e o ALB, não o recurso leve de integração em si.
+- **Roteamento por prefixo dentro do cluster (corrigido 2026-07-13):** acontece via um **único `Ingress` centralizado**, mantido por `iac-video-processor-infra` (seção 6 daquele spec) — não um `Ingress` por serviço. Essa é a mesma correção que o `tech-challenge` adotou depois de bater no bug de múltiplos ALBs (ver nota da seção 5) — um `Ingress` por serviço, mesmo com `group.name` compartilhado, é mais fácil de errar (basta um serviço esquecer a annotation) do que um único arquivo de regras de path mantido por um único time.
+- **ALB interno (`scheme: internal`):** não fica exposto direto à internet — só alcançável pelo VPC Link do API Gateway. Mesma decisão de segurança que o `tech-challenge` adotou na correção do Ingress centralizado.
 - **Security group do VPC Link:** recurso dedicado deste repo (`aws_security_group.vpc_link`), egress liberado (`0.0.0.0/0`) — evita bloqueios de rede internos. Diferente do repo antigo, que reaproveitava o security group do próprio cluster EKS; aqui optamos por um SG isolado e de propósito único.
-- **Efeito de adicionar um serviço novo no futuro:** só 1 rota nova aqui (ex.: `ANY /videos/{proxy+}`, com sua própria integração apontando pro mesmo ALB/VPC Link) + o `Ingress` do novo serviço no cluster. Nenhuma VPC Link nova, nenhum ALB novo, nenhum security group novo — é o principal ganho de eficiência dessa decisão (1 Load Balancer para N serviços, não N Load Balancers).
+- **Efeito de adicionar um serviço novo no futuro:** só 1 rota nova aqui (ex.: `ANY /videos/{proxy+}`, com sua própria integração apontando pro mesmo ALB/VPC Link) + **uma nova regra de path no `Ingress` centralizado** de `iac-video-processor-infra` (não um `Ingress` novo). Nenhuma VPC Link nova, nenhum ALB novo, nenhum security group novo — é o principal ganho de eficiência dessa decisão (1 Load Balancer para N serviços, não N Load Balancers).
 
 ---
 
@@ -132,7 +136,7 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 |---|---|---|
 | `modules/api-gateway` | módulo de registry `terraform-aws-modules/apigateway-v2/aws` | reescrito — REST→HTTP API |
 | `data.aws_vpc`/`data.aws_subnets` (para VPC Link) | **portado, tags atualizadas** | volta nesta fase — ver seção 7. `data.aws_security_group` do cluster EKS **não portado**: o novo security group do VPC Link é dedicado (`aws_security_group.vpc_link`), não reaproveita o SG do cluster |
-| `data.aws_lb`/`data.aws_lb_listener` | **portado, tag atualizada** | volta nesta fase — ALB agora **compartilhado** entre serviços via Ingress group, não 1:1 com um serviço |
+| `data.aws_lb`/`data.aws_lb_listener` | **portado, tag atualizada para `video-processor/alb = unified`** (não a tag genérica de cluster — ver seção 5) | volta nesta fase — ALB agora **compartilhado** entre serviços via `Ingress` centralizado, não 1:1 com um serviço |
 | `data.aws_iam_role.lab_role` / `var.lab_role_arn` | — | **não portado, decisão definitiva** — ver seção 6.1 |
 | `data.aws_lambda_function` (authentication/authorizer/users) | mantido, nomes atualizados | só authentication + authorizer — `users` saiu de Lambda, foi para EKS/ALB |
 | `aws/` + `localstack/` | `prod/` + `dev/` | renomeado |

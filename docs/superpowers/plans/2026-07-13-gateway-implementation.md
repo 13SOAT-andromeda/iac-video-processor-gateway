@@ -16,10 +16,10 @@
 - Folder structure: `dev/` (LocalStack, `tflocal`) + `prod/` (real AWS, S3 backend, key `video-processor-gateway/terraform.tfstate`) (spec section 3).
 - Routes this phase: `POST /auth/login` (Lambda, no authorizer) + `ANY /users/{proxy+}` (ALB via VPC Link, `REQUEST` authorizer) — no `/links/*` or `/videos/*` yet (spec section 4).
 - Lambda function name contract: `video-processor-authentication`, `video-processor-authorizer` (spec section 5).
-- VPC/EKS tag contract: VPC tag `Name = video-processor-vpc`, EKS cluster tag `video-processor-eks` (spec section 5).
+- VPC tag contract: `Name = video-processor-vpc`. ALB tag contract: `video-processor/alb = unified` — a deterministic, project-exclusive tag, **not** the generic `kubernetes.io/cluster/<name> = owned` tag (spec section 5; see the note on Task 2 below for why this matters).
 - Authorizer: type `REQUEST`, `authorizer_result_ttl_in_seconds = 300`, identity source `$request.header.Authorization` (spec section 6).
 - **No IAM role of any kind in this repo** — no `data.aws_iam_role.lab_role`, no `var.lab_role_arn` (spec section 6.1, decision is final).
-- 1 VPC Link, 1 `HTTP_PROXY` integration, reused by all current and future domain routes — not 1-per-service (spec section 7).
+- 1 VPC Link shared by all current and future domain routes — not 1-per-service. Each route gets its own `aws_apigatewayv2_integration` (the module embeds `integration` inside each `routes` map entry), but all of them point at the same VPC Link and the same ALB listener (spec section 7).
 - No CORS configuration this phase (spec section 9, point 1).
 - Resource/tag naming prefix: `video-processor-*` (umbrella spec section 7).
 
@@ -181,7 +181,7 @@ data "aws_subnets" "private" {
 
 data "aws_lb" "eks_alb" {
   tags = {
-    "kubernetes.io/cluster/video-processor-eks" = "owned"
+    "video-processor/alb" = "unified"
   }
 }
 
@@ -190,6 +190,8 @@ data "aws_lb_listener" "eks_alb_listener" {
   port               = 80
 }
 ```
+
+`data.aws_lb` uses a **deterministic, project-exclusive tag** (`video-processor/alb = unified`), not the generic `kubernetes.io/cluster/<name> = owned` tag the AWS Load Balancer Controller stamps on *any* ALB it creates for the cluster. The generic tag is ambiguous the moment more than one Ingress-derived ALB exists — this exact bug bit the `tech-challenge` reference project (see `tech-challenge-fiap/docs/superpowers/specs/2026-05-19-centralized-ingress-design.md`) and was fixed there by switching to a dedicated tag applied via the `Ingress`'s `alb.ingress.kubernetes.io/tags` annotation. `iac-video-processor-infra` applies this tag on its centralized `Ingress` (see that repo's spec section 6.1) — if that tag isn't present yet when this task runs, `terraform plan`/`apply` will fail to resolve `data.aws_lb` with a "no matching load balancer found" error, which is expected until `iac-video-processor-infra`'s `Ingress` is deployed (dependency order: umbrella spec section 8).
 
 - [ ] **Step 2: Validate**
 
