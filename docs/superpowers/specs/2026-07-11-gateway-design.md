@@ -41,7 +41,7 @@ POST   /auth/login          -- Lambda (authentication), pública, sem authorizer
 ANY    /users/{proxy+}      -- ALB via VPC Link (users-api, EKS), [administrator]
 ```
 
-Sem rotas `/links/*` ou `/videos/*` nesta fase (fora de escopo — `links-service` e `video-processor-api` são specs futuras). Quando existirem, cada uma soma **uma rota catch-all nova** (`ANY /videos/{proxy+}`, `ANY /links/{proxy+}`) reaproveitando a **mesma** integração ALB/VPC Link já provisionada aqui — sem infra nova neste repo (ver seção 7).
+Sem rotas `/links/*` ou `/videos/*` nesta fase (fora de escopo — `links-service` e `video-processor-api` são specs futuras). Quando existirem, cada uma soma **uma rota catch-all nova** (`ANY /videos/{proxy+}`, `ANY /links/{proxy+}`) apontando pro **mesmo VPC Link e o mesmo listener de ALB** já provisionados aqui — sem VPC Link novo, sem ALB novo, sem security group novo neste repo (ver seção 7).
 
 `ANY /users/{proxy+}` é catch-all (não 5 rotas por verbo) porque o roteamento fino por verbo/recurso já é responsabilidade do Gin dentro do container `users-api` — o gateway só decide "isso é uma rota de domínio, manda pro ALB" e repassa o path original.
 
@@ -76,17 +76,6 @@ data "aws_subnets" "private" {
   }
 }
 
-data "aws_security_group" "eks_cluster" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected.id]
-  }
-  filter {
-    name   = "tag:aws:eks:cluster-name"
-    values = ["video-processor-eks"]
-  }
-}
-
 data "aws_lb" "eks_alb" {
   tags = {
     "kubernetes.io/cluster/video-processor-eks" = "owned"
@@ -102,7 +91,7 @@ data "aws_lb_listener" "eks_alb_listener" {
 **Contrato entre repos:**
 - `video-processor-authentication` / `video-processor-authorizer` — nomes exatos de função Lambda (Terraform local de cada serviço).
 - `video-processor-vpc` — tag `Name` da VPC, definida em `iac-video-processor-infra` (seção 4 daquele spec).
-- `video-processor-eks` — tag de cluster EKS, usada tanto para achar o security group do cluster quanto o ALB (`kubernetes.io/cluster/video-processor-eks = owned`, aplicada automaticamente pelo AWS Load Balancer Controller nos recursos que ele cria a partir de `Ingress`).
+- `video-processor-eks` — tag de cluster EKS, usada para achar o ALB (`kubernetes.io/cluster/video-processor-eks = owned`, aplicada automaticamente pelo AWS Load Balancer Controller nos recursos que ele cria a partir de `Ingress`). O security group do VPC Link é um recurso dedicado deste repo (`aws_security_group.vpc_link`, seção 7), não uma reutilização do security group do cluster — mais simples e isolado que o padrão do repo antigo, que reaproveitava o SG do cluster EKS por padrão.
 
 O ALB em si **não é criado por nenhum repo Terraform** — é provisionado dinamicamente pelo AWS Load Balancer Controller (rodando no EKS, instalado via Helm pelo `iac-video-processor-infra`) a partir dos `Ingress` de cada serviço. Este repo só o **descobre** via `data.aws_lb`.
 
@@ -131,9 +120,9 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 ## 7. VPC Link + ALB compartilhado (EKS)
 
 - **1 VPC Link único** (`aws_apigatewayv2_vpc_link`), reaproveitado por todas as rotas de domínio atuais e futuras — não é 1 VPC Link por serviço.
-- **1 integração `HTTP_PROXY`** apontando pro listener do ALB (porta 80), com `request_parameters = { "overwrite:path" = "$request.path" }` — o path completo é repassado ao ALB, e o roteamento por prefixo (`/users`, futuramente `/videos`, `/links`) acontece **dentro do cluster**, via regras de path dos recursos `Ingress` de cada serviço (mesmo `alb.ingress.kubernetes.io/group.name`, para que o AWS Load Balancer Controller funda todos num único ALB — ver `iac-video-processor-infra`, seção 6).
-- **Security group do VPC Link:** egress liberado (`0.0.0.0/0`), mesmo padrão do repo antigo — evita bloqueios de rede internos.
-- **Efeito de adicionar um serviço novo no futuro:** só 1 rota nova aqui (ex.: `ANY /videos/{proxy+}` reaproveitando a mesma integração) + o `Ingress` do novo serviço no cluster. Nenhuma VPC Link nova, nenhum ALB novo — é o principal ganho de eficiência dessa decisão (1 Load Balancer para N serviços, não N Load Balancers).
+- **1 integração `HTTP_PROXY` por rota de domínio**, cada uma apontando pro mesmo listener do ALB (porta 80) e pelo mesmo VPC Link (`connection_id`/`vpc_link_key`), com `request_parameters = { "overwrite:path" = "$request.path" }` — o path completo é repassado ao ALB, e o roteamento por prefixo (`/users`, futuramente `/videos`, `/links`) acontece **dentro do cluster**, via regras de path dos recursos `Ingress` de cada serviço (mesmo `alb.ingress.kubernetes.io/group.name`, para que o AWS Load Balancer Controller funda todos num único ALB — ver `iac-video-processor-infra`, seção 6). Nota de implementação: o módulo Terraform escolhido (seção 2) embute a integração dentro de cada entrada do mapa `routes`, então tecnicamente cada rota ganha seu próprio recurso `aws_apigatewayv2_integration` — o que é **compartilhado de fato** (e o que importa pra custo/eficiência) é o VPC Link e o ALB, não o recurso leve de integração em si.
+- **Security group do VPC Link:** recurso dedicado deste repo (`aws_security_group.vpc_link`), egress liberado (`0.0.0.0/0`) — evita bloqueios de rede internos. Diferente do repo antigo, que reaproveitava o security group do próprio cluster EKS; aqui optamos por um SG isolado e de propósito único.
+- **Efeito de adicionar um serviço novo no futuro:** só 1 rota nova aqui (ex.: `ANY /videos/{proxy+}`, com sua própria integração apontando pro mesmo ALB/VPC Link) + o `Ingress` do novo serviço no cluster. Nenhuma VPC Link nova, nenhum ALB novo, nenhum security group novo — é o principal ganho de eficiência dessa decisão (1 Load Balancer para N serviços, não N Load Balancers).
 
 ---
 
@@ -142,7 +131,7 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 | Antigo | Novo | Observação |
 |---|---|---|
 | `modules/api-gateway` | módulo de registry `terraform-aws-modules/apigateway-v2/aws` | reescrito — REST→HTTP API |
-| `data.aws_vpc`/`data.aws_subnets`/`data.aws_security_group` (para VPC Link) | **portado, tags atualizadas** | volta nesta fase — ver seção 7 |
+| `data.aws_vpc`/`data.aws_subnets` (para VPC Link) | **portado, tags atualizadas** | volta nesta fase — ver seção 7. `data.aws_security_group` do cluster EKS **não portado**: o novo security group do VPC Link é dedicado (`aws_security_group.vpc_link`), não reaproveita o SG do cluster |
 | `data.aws_lb`/`data.aws_lb_listener` | **portado, tag atualizada** | volta nesta fase — ALB agora **compartilhado** entre serviços via Ingress group, não 1:1 com um serviço |
 | `data.aws_iam_role.lab_role` / `var.lab_role_arn` | — | **não portado, decisão definitiva** — ver seção 6.1 |
 | `data.aws_lambda_function` (authentication/authorizer/users) | mantido, nomes atualizados | só authentication + authorizer — `users` saiu de Lambda, foi para EKS/ALB |
