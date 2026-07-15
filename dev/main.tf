@@ -83,7 +83,7 @@ module "api_gateway" {
   source  = "terraform-aws-modules/apigateway-v2/aws"
   version = "~> 6.1"
 
-  name          = "video-processor-api-${var.environment}"
+  name          = "video-processor-api-gateway-${var.environment}"
   description   = "HTTP API for the video-processor auth/users domain"
   protocol_type = "HTTP"
 
