@@ -1,6 +1,6 @@
 # Spec — iac-video-processor-gateway
 
-**Data:** 2026-07-11 (atualizado 2026-07-13 — backend misto Lambda + EKS)
+**Data:** 2026-07-11 (atualizado 2026-07-13 — backend misto Lambda + EKS; renomeado 2026-07-14 — futuro serviço `video-processor-api` passa a se chamar `video-processor-converter`)
 **Status:** Draft — pronto para virar plano de implementação
 **Repo antigo de referência:** `iac-tech-challenge-gateway`
 **Spec guarda-chuva:** `docs/superpowers/specs/2026-07-11-video-processor-auth-infra-migration-design.md` (workspace raiz)
@@ -11,7 +11,7 @@
 
 Provisionar a borda da API: **API Gateway HTTP API** com rotas de autenticação (Lambda) e rotas de APIs de domínio hospedadas em EKS (proxy via VPC Link para um Application Load Balancer compartilhado), mais o `REQUEST` authorizer plugado em toda rota protegida.
 
-**Backend misto nesta fase (atualizado 2026-07-13):** `authentication` e `authorizer` continuam Lambda (`AWS_PROXY`, permissão resource-based, sem VPC). `users-api` — e as futuras `video-processor-api`/`links-generator` — rodam como containers no EKS, atrás de **um único Application Load Balancer compartilhado**, alcançado via VPC Link (`HTTP_PROXY`). Isso reaproxima este repo do padrão do `iac-tech-challenge-gateway` (que já usava VPC Link + ALB do EKS para tudo), mas agora com dois tipos de integração coexistindo: Lambda direto para auth, VPC Link para as APIs de domínio — ver seção 7.
+**Backend misto nesta fase (atualizado 2026-07-13):** `authentication` e `authorizer` continuam Lambda (`AWS_PROXY`, permissão resource-based, sem VPC). `users-api` — e as futuras `video-processor-converter`/`links-generator` — rodam como containers no EKS, atrás de **um único Application Load Balancer compartilhado**, alcançado via VPC Link (`HTTP_PROXY`). Isso reaproxima este repo do padrão do `iac-tech-challenge-gateway` (que já usava VPC Link + ALB do EKS para tudo), mas agora com dois tipos de integração coexistindo: Lambda direto para auth, VPC Link para as APIs de domínio — ver seção 7.
 
 ---
 
@@ -41,7 +41,7 @@ POST   /auth/login          -- Lambda (authentication), pública, sem authorizer
 ANY    /users/{proxy+}      -- ALB via VPC Link (users-api, EKS), [administrator]
 ```
 
-Sem rotas `/links/*` ou `/videos/*` nesta fase (fora de escopo — `links-service` e `video-processor-api` são specs futuras). Quando existirem, cada uma soma **uma rota catch-all nova** (`ANY /videos/{proxy+}`, `ANY /links/{proxy+}`) apontando pro **mesmo VPC Link e o mesmo listener de ALB** já provisionados aqui — sem VPC Link novo, sem ALB novo, sem security group novo neste repo (ver seção 7).
+Sem rotas `/links/*` ou `/videos/*` nesta fase (fora de escopo — `links-service` e `video-processor-converter` são specs futuras). Quando existirem, cada uma soma **uma rota catch-all nova** (`ANY /videos/{proxy+}`, `ANY /links/{proxy+}`) apontando pro **mesmo VPC Link e o mesmo listener de ALB** já provisionados aqui — sem VPC Link novo, sem ALB novo, sem security group novo neste repo (ver seção 7).
 
 `ANY /users/{proxy+}` é catch-all (não 5 rotas por verbo) porque o roteamento fino por verbo/recurso já é responsabilidade do Gin dentro do container `users-api` — o gateway só decide "isso é uma rota de domínio, manda pro ALB" e repassa o path original.
 
