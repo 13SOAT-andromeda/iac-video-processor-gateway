@@ -1,9 +1,10 @@
 # Spec — iac-video-processor-gateway
 
-**Data:** 2026-07-11 (atualizado 2026-07-13 — backend misto Lambda + EKS; renomeado 2026-07-14 — futuro serviço `video-processor-api` passa a se chamar `video-processor-converter`)
+**Data:** 2026-07-11 (atualizado 2026-07-13 — backend misto Lambda + EKS; renomeado 2026-07-14 — futuro serviço `video-processor-api` passa a se chamar `video-processor-converter`; atualizado 2026-07-16 — rotas de signup/verify, desacoplamento users-api↔authentication; ADR-011)
 **Status:** Draft — pronto para virar plano de implementação
 **Repo antigo de referência:** `iac-tech-challenge-gateway`
-**Spec guarda-chuva:** `docs/superpowers/specs/2026-07-11-video-processor-auth-infra-migration-design.md` (workspace raiz)
+**Spec guarda-chuva:** `docs/superpowers/specs/2026-07-11-video-processor-auth-infra-migration-design.md` (workspace raiz), atualizada em 2026-07-16
+**RFCs de origem da atualização 2026-07-16:** `RFC_service-authentication.md`, `RFC_service-users.md` (ADR-011)
 
 ---
 
@@ -34,16 +35,22 @@ iac-video-processor-gateway/
 
 ---
 
-## 4. Rotas (escopo desta fase)
+## 4. Rotas (escopo desta fase, atualizado 2026-07-16 — ADR-011)
 
 ```
+POST   /auth/signup         -- Lambda (authentication), pública, sem authorizer
+GET    /auth/verify         -- Lambda (authentication), pública, sem authorizer
 POST   /auth/login          -- Lambda (authentication), pública, sem authorizer
-ANY    /users/{proxy+}      -- ALB via VPC Link (users-api, EKS), [administrator]
+ANY    /users/{proxy+}      -- ALB via VPC Link (users-api, EKS), autenticado
 ```
+
+**Sobre `ANY /users/{proxy+}` (corrigido 2026-07-16):** a anotação `[administrator]` da versão anterior deste spec estava incompleta — desde que `PUT/GET /users/me` (self-service) passou a existir, essa rota atende tanto usuários comuns (seu próprio perfil) quanto administradores (perfis de terceiros). O `authorizer` só garante que existe um JWT válido; a distinção entre "dono do recurso" e "role administrator" é inteiramente responsabilidade do handler dentro de `users-api` (que, por rodar atrás de uma integração `HTTP_PROXY`/ALB e não de um proxy Lambda, valida o JWT por conta própria — ver `video-processor-users-api`, seção 5.1, em vez de depender do `context` que o `authorizer` devolveria para uma integração Lambda).
+
+**Removido nesta revisão:** rota interna `/auth/credentials` — não chegou a ser adicionada aqui (a decisão de brainstorming eliminou esse endpoint antes da implementação, já que `POST /users` foi removido de `users-api` e não sobrou nenhum chamador — ver `video-processor-authentication-api`, seção 1).
 
 Sem rotas `/links/*` ou `/videos/*` nesta fase (fora de escopo — `links-service` e `video-processor-converter` são specs futuras). Quando existirem, cada uma soma **uma rota catch-all nova** (`ANY /videos/{proxy+}`, `ANY /links/{proxy+}`) apontando pro **mesmo VPC Link e o mesmo listener de ALB** já provisionados aqui — sem VPC Link novo, sem ALB novo, sem security group novo neste repo (ver seção 7).
 
-`ANY /users/{proxy+}` é catch-all (não 5 rotas por verbo) porque o roteamento fino por verbo/recurso já é responsabilidade do Gin dentro do container `users-api` — o gateway só decide "isso é uma rota de domínio, manda pro ALB" e repassa o path original.
+`ANY /users/{proxy+}` é catch-all (não 6 rotas por verbo) porque o roteamento fino por verbo/recurso já é responsabilidade do Gin dentro do container `users-api` — o gateway só decide "isso é uma rota de domínio, manda pro ALB" e repassa o path original.
 
 ---
 
@@ -103,7 +110,7 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 
 - Tipo: `REQUEST` (não `TOKEN`) — precisa devolver `userId`/`role` no `context`, conforme `service-authorizer.md`.
 - Cache: `authorizer_result_ttl_in_seconds = 300`, chave de cache = header `Authorization`.
-- Aplicado a todas as rotas exceto `POST /auth/login`.
+- Aplicado a todas as rotas exceto as 3 públicas de `authentication` (`POST /auth/signup`, `GET /auth/verify`, `POST /auth/login` — atualizado 2026-07-16, ADR-011).
 
 ---
 
@@ -146,7 +153,7 @@ O ALB em si **não é criado por nenhum repo Terraform** — é provisionado din
 ## 9. Pontos em aberto (resolver no plano de implementação)
 
 1. CORS: conforme a arquitetura, o Next.js atua como BFF — chamadas ao API Gateway partem do servidor, não do browser, então CORS não é necessário no API Gateway nesta fase (não há frontend ainda, mas a decisão já está tomada para quando ele existir).
-2. Rate limiting/usage plan em `/auth/login` (mencionado em `service-authentication.md` como erro `429 TOO_MANY_ATTEMPTS`) — configurar throttling no estágio do HTTP API.
+2. Rate limiting/usage plan nas 3 rotas públicas de `/auth/*` (`signup`, `verify`, `login` — todas mencionadas em `service-authentication.md` como potencial `429 TOO_MANY_ATTEMPTS`; `signup`/`verify` são superfície de abuso adicional desde a atualização 2026-07-16, ADR-011) — configurar throttling no estágio do HTTP API.
 3. Listener do ALB: manter porta 80/HTTP simples (tráfego VPC Link é interno à VPC, TLS já termina no API Gateway do lado do cliente — mesmo padrão do repo antigo) ou exigir HTTPS ponta-a-ponta até o pod? Recomendação: manter HTTP simples, mas confirmar no plano.
 
 (O ponto anterior sobre `LabRole` foi resolvido — ver seção 6.1.)
