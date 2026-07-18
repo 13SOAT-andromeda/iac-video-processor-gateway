@@ -50,6 +50,30 @@ run "users_route_is_catchall_behind_authorizer" {
   }
 }
 
+run "links_routes_are_catchall_and_root_behind_authorizer" {
+  command = plan
+
+  assert {
+    condition     = contains(keys(module.api_gateway.routes), "ANY /links/{proxy+}")
+    error_message = "Expected a catch-all ANY /links/{proxy+} route proxying to the ALB (links-service)"
+  }
+
+  assert {
+    condition     = contains(keys(module.api_gateway.routes), "ANY /links")
+    error_message = "Expected an ANY /links route — POST/GET /links have no extra path segment, so {proxy+} alone would not match them"
+  }
+
+  assert {
+    condition     = module.api_gateway.routes["ANY /links/{proxy+}"].authorization_type == "CUSTOM"
+    error_message = "ANY /links/{proxy+} must stay behind the request authorizer (CUSTOM); losing this would expose link data without authentication"
+  }
+
+  assert {
+    condition     = module.api_gateway.routes["ANY /links"].authorization_type == "CUSTOM"
+    error_message = "ANY /links must stay behind the request authorizer (CUSTOM)"
+  }
+}
+
 run "request_authorizer_is_configured" {
   command = plan
 

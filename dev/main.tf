@@ -137,6 +137,42 @@ module "api_gateway" {
         }
       }
     }
+
+    # links-service (video-processor-link-api, pod EKS atrás do mesmo ALB
+    # unificado — path /links roteado pelo Ingress centralizado do
+    # iac-video-processor-infra). Catch-all cobre POST/GET /links,
+    # /links/:id, /links/:id/{events,upload,download} e /links/user/:id.
+    "ANY /links/{proxy+}" = {
+      authorization_type = "CUSTOM"
+      authorizer_key     = "request"
+      integration = {
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = local.eks_alb_listener_arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
+        request_parameters = {
+          "overwrite:path" = "$request.path"
+        }
+      }
+    }
+
+    # POST /links e GET /links não têm segmento extra — o {proxy+} acima não
+    # os captura, então precisam de uma rota própria no API Gateway.
+    "ANY /links" = {
+      authorization_type = "CUSTOM"
+      authorizer_key     = "request"
+      integration = {
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = local.eks_alb_listener_arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
+        request_parameters = {
+          "overwrite:path" = "$request.path"
+        }
+      }
+    }
   }
 
   tags = {
