@@ -123,6 +123,22 @@ module "api_gateway" {
       }
     }
 
+    "POST /auth/signup" = {
+      authorization_type = "NONE"
+      integration = {
+        uri                    = data.aws_lambda_function.authentication.arn
+        payload_format_version = "2.0"
+      }
+    }
+
+    "GET /auth/verify" = {
+      authorization_type = "NONE"
+      integration = {
+        uri                    = data.aws_lambda_function.authentication.arn
+        payload_format_version = "2.0"
+      }
+    }
+
     "ANY /users/{proxy+}" = {
       authorization_type = "CUSTOM"
       authorizer_key     = "request"
