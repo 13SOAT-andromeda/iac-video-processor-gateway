@@ -39,6 +39,16 @@ run "login_route_is_public_lambda" {
     condition     = contains(keys(module.api_gateway.routes), "POST /auth/login")
     error_message = "Expected a POST /auth/login route wired to the authentication Lambda"
   }
+
+  assert {
+    condition     = contains(keys(module.api_gateway.routes), "POST /auth/signup")
+    error_message = "Expected a POST /auth/signup route wired to the authentication Lambda (ADR-013)"
+  }
+
+  assert {
+    condition     = contains(keys(module.api_gateway.routes), "GET /auth/verify")
+    error_message = "Expected a GET /auth/verify route wired to the authentication Lambda (ADR-013)"
+  }
 }
 
 run "users_route_is_catchall_behind_authorizer" {
@@ -102,6 +112,16 @@ run "login_stays_public_users_stays_protected" {
   assert {
     condition     = module.api_gateway.routes["POST /auth/login"].authorization_type == "NONE"
     error_message = "POST /auth/login must remain authorization_type = NONE; attaching the authorizer here would lock users out of logging in and break the auth flow entirely"
+  }
+
+  assert {
+    condition     = module.api_gateway.routes["POST /auth/signup"].authorization_type == "NONE"
+    error_message = "POST /auth/signup must be authorization_type = NONE; it's public by design (ADR-011) since a user signing up has no JWT yet"
+  }
+
+  assert {
+    condition     = module.api_gateway.routes["GET /auth/verify"].authorization_type == "NONE"
+    error_message = "GET /auth/verify must be authorization_type = NONE; it's public by design (ADR-011) since email verification happens before the user ever logs in"
   }
 
   assert {
