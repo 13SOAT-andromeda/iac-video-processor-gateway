@@ -115,7 +115,7 @@ module "api_gateway" {
         connection_type = "VPC_LINK"
         vpc_link_key    = "users"
         request_parameters = {
-          "overwrite:path" = "$request.path"
+          "overwrite:path" = "/api$request.path"
         }
       }
     }
