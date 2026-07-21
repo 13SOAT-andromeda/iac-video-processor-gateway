@@ -153,6 +153,43 @@ module "api_gateway" {
         }
       }
     }
+
+    # links-service (video-processor-link-api, pod EKS atrás do mesmo ALB
+    # unificado). Rota pública fica sem prefixo (/links, o que o cliente
+    # chama) — o overwrite:path reescreve pra /api/links na hora de
+    # encaminhar pro ALB, batendo com as rotas reais que o Gin registra
+    # (mesma convenção do /users -> /api/users).
+    "ANY /links/{proxy+}" = {
+      authorization_type = "CUSTOM"
+      authorizer_key     = "request"
+      integration = {
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = local.eks_alb_listener_arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
+        request_parameters = {
+          "overwrite:path" = "/api$request.path"
+        }
+      }
+    }
+
+    # POST /links e GET /links não têm segmento extra — o {proxy+} acima não
+    # os captura, então precisam de uma rota própria no API Gateway.
+    "ANY /links" = {
+      authorization_type = "CUSTOM"
+      authorizer_key     = "request"
+      integration = {
+        type            = "HTTP_PROXY"
+        method          = "ANY"
+        uri             = local.eks_alb_listener_arn
+        connection_type = "VPC_LINK"
+        vpc_link_key    = "users"
+        request_parameters = {
+          "overwrite:path" = "/api$request.path"
+        }
+      }
+    }
   }
 
   tags = {
