@@ -84,7 +84,10 @@ run "links_routes_are_catchall_and_root_behind_authorizer" {
   }
 
   assert {
-    condition     = module.api_gateway.routes["ANY /links/{proxy+}"].request_parameters["overwrite:path"] == "/api$request.path"
+    # request_parameters vive na integration, não na route (aws_apigatewayv2_route
+    # não tem esse atributo — só aws_apigatewayv2_integration; module.api_gateway.routes
+    # é literalmente aws_apigatewayv2_route.this, sem o overwrite:path).
+    condition     = module.api_gateway.integrations["ANY /links/{proxy+}"].request_parameters["overwrite:path"] == "/api$request.path"
     error_message = "Expected the forwarded path to be rewritten to /api/links/... — the link-api registers its Gin routes under /api/links, same convention as /users -> /api/users"
   }
 }
