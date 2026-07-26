@@ -8,6 +8,9 @@ on:
 
 jobs:
   terraform:
+    permissions:
+      contents: read
+      pull-requests: write
     uses: 13SOAT-andromeda/tech-andromeda-ci-config/.github/workflows/reusable-terraform-cd.yml@v1
     with:
       terraform-dir: prod
