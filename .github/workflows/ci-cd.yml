@@ -1,0 +1,18 @@
+name: CI/CD
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  terraform:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: 13SOAT-andromeda/tech-andromeda-ci-config/.github/workflows/reusable-terraform-cd.yml@v1
+    with:
+      terraform-dir: prod
+      run-tests: true
+    secrets: inherit
